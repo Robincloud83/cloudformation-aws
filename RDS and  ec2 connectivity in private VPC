@@ -1,0 +1,265 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template to create VPC, EC2 (Public & Private), and RDS (MySQL)"
+
+Parameters:
+  DBInstanceIdentifier:
+    Type: String
+    Default: "mydbinstance"
+    Description: "The DB instance identifier"
+
+  DBName:
+    Type: String
+    Default: "papadatabase"
+    Description: "The database name to create when the DB instance is created"
+
+  DBUsername:
+    Type: String
+    Default: "papaadmin"
+    NoEcho: true
+    Description: "The database master username"
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Default: "PapaDB#1234"
+    Description: "The database master password"
+
+Resources:
+  # VPC
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: MyVPC
+
+  # Subnets
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: "10.0.1.0/24"
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: "10.0.2.0/24"
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: "10.0.3.0/24"
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  # Internet Gateway and Route Tables for public subnet
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyInternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  # Elastic IP for NAT Gateway
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: NatEIP
+
+  # NAT Gateway
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: AttachGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: MyNatGateway
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  # Route for private subnets to use NAT Gateway
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NatGateway
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  # Associate Private Subnets with Private Route Table
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Groups
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH and HTTP from anywhere"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: EC2SecurityGroup
+
+  MyRDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow MySQL access from EC2 instances"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: RDSSecurityGroup
+
+  # DB Subnet Group
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Private Subnets for RDS in two AZs"
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  # RDS Instance
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBName: !Ref DBName
+      Engine: "mysql"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: "db.t3.micro"
+      AllocatedStorage: 20
+      VPCSecurityGroups:
+        - !Ref MyRDSSecurityGroup
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageType: "gp2"
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+
+  # Public EC2 Instance
+  PublicInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: papa
+      ImageId: ami-0fa91bc90632c73c9   # Ubuntu AMI (update per region)
+      InstanceType: t3.micro
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: PublicInstance-Ubuntu
+
+  # Private EC2 Instance
+  PrivateInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: papa
+      ImageId: ami-0fa91bc90632c73c9   # Ubuntu AMI (update per region)
+      InstanceType: t3.micro
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroupIds:
+        - !Ref InstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: PrivateInstance-Ubuntu
+
+Outputs:
+  RDSInstanceEndpoint:
+    Description: "Endpoint of the RDS Instance"
+    Value: !GetAtt MyRDSInstance.Endpoint.Address
+
+  RDSInstanceID:
+    Description: "RDS Instance ID"
+    Value: !Ref MyRDSInstance
+
+  PublicInstanceID:
+    Description: "Public EC2 Instance ID"
+    Value: !Ref PublicInstance
+
+  PrivateInstanceID:
+    Description: "Private EC2 Instance ID"
+    Value: !Ref PrivateInstance
+
+  VPCID:
+    Description: "VPC ID"
+    Value: !Ref MyVPC
