@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 instance with Elastic IP for Ubuntu Server
+
+Resources:
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: papa                     # ? Your key pair
+      ImageId: ami-0fa91bc90632c73c9        # ? Ubuntu 24.04 LTS (x86_64)
+      InstanceType: t3.micro                # ? Free-tier eligible x86 instance
+      SecurityGroups:
+        - default
+      Tags:
+        - Key: Name
+          Value: PapaInstance-Ubuntu2404   # instance name
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref Instance
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref Instance
+
+  PublicIP:
+    Description: Elastic IP Address
+    Value: !Ref EIP
