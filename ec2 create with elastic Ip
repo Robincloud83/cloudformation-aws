@@ -27,3 +27,47 @@ Outputs:
   PublicIP:
     Description: Elastic IP Address
     Value: !Ref EIP
+
+
+========================================================
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 instance with Elastic IP for Ubuntu Server (20GB EBS)
+
+Resources:
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: papa
+      ImageId: ami-0fa91bc90632c73c9      # Ubuntu 24.04 LTS
+      InstanceType: t3.micro
+      SecurityGroups:
+        - default
+
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 20          # 20GB Volume
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+
+      Tags:
+        - Key: Name
+          Value: PapaInstance-Ubuntu2404
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref Instance
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref Instance
+
+  PublicIP:
+    Description: Elastic IP Address
+    Value: !Ref EIP
+
